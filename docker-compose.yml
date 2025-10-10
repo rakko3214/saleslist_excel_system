@@ -17,7 +17,7 @@ services:
       - mysql
     networks:
       - dev-network
-    command: python excel_only_app.py
+    command: python real_data_app.py
     stdin_open: true
     tty: true
 
