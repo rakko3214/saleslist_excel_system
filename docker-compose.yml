@@ -1,0 +1,83 @@
+services:
+  # Python アプリケーション
+  python-app:
+    build: .
+    container_name: python-dev
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+    depends_on:
+      - mysql
+    networks:
+      - dev-network
+    command: python excel_only_app.py
+    stdin_open: true
+    tty: true
+
+  # MySQL データベース
+  mysql:
+    image: mysql:8.0
+    container_name: mysql-dev
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - dev-network
+
+  # phpMyAdmin
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    container_name: phpmyadmin-dev
+    restart: always
+    ports:
+      - "8081:80"
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      PMA_USER: root
+      PMA_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      UPLOAD_LIMIT: 1G
+      MEMORY_LIMIT: 1G
+      MAX_EXECUTION_TIME: 600
+    volumes:
+      - ./phpmyadmin-config.ini:/usr/local/etc/php/conf.d/phpmyadmin-misc.ini
+    depends_on:
+      - mysql
+    networks:
+      - dev-network
+
+  # Adminer (軽量なデータベース管理ツール)
+  adminer:
+    image: adminer:latest
+    container_name: adminer-dev
+    restart: always
+    ports:
+      - "8082:8080"
+    depends_on:
+      - mysql
+    networks:
+      - dev-network
+
+volumes:
+  mysql_data:
+    driver: local
+
+networks:
+  dev-network:
+    driver: bridge

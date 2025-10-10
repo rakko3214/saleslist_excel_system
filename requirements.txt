@@ -1,0 +1,29 @@
+# WebフレームワークとしてFlaskを使用
+Flask==2.3.3
+Werkzeug==2.3.7
+
+# MySQL接続用ライブラリ
+mysqlclient==2.2.0
+PyMySQL==1.1.0
+cryptography==41.0.7
+
+# SQLAlchemy（ORM）
+SQLAlchemy==2.0.21
+Flask-SQLAlchemy==3.0.5
+
+# 環境変数管理
+python-dotenv==1.0.0
+
+# 開発用ツール
+flask-cors==4.0.0
+
+# デバッグとロギング
+python-json-logger==2.0.7
+
+# Excel出力用ライブラリ（バージョン互換性修正）
+numpy==1.24.3
+pandas==2.0.3
+openpyxl==3.1.2
+
+# 日付処理
+python-dateutil==2.8.2
