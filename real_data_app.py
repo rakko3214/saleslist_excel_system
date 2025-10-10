@@ -457,7 +457,7 @@ MAIN_TEMPLATE = '''
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>営業リスト</title>
+    <title>ハローワーク営業リスト</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f5f5; }
@@ -492,7 +492,7 @@ MAIN_TEMPLATE = '''
 <body>
     <div class="container">
         <div class="header">
-            <h1>🏢 営業リスト</h1>
+            <h1>🏢 ハローワーク営業リスト</h1>
             <p>{{ stats.total_companies }}件の企業データ・{{ stats.total_areas }}支店・{{ stats.total_accounts }}アカウントを管理</p>
         </div>
 
