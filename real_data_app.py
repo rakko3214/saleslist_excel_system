@@ -457,7 +457,7 @@ MAIN_TEMPLATE = '''
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ハローワークデータ管理システム（実データ版）</title>
+    <title>営業リスト</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f5f5; }
@@ -492,31 +492,10 @@ MAIN_TEMPLATE = '''
 <body>
     <div class="container">
         <div class="header">
-            <h1>🏢 ハローワークデータ管理システム（実データ版）</h1>
+            <h1>🏢 営業リスト</h1>
             <p>{{ stats.total_companies }}件の企業データ・{{ stats.total_areas }}支店・{{ stats.total_accounts }}アカウントを管理</p>
         </div>
-        
-        <div class="card">
-            <h2>📊 システム統計</h2>
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <h3>{{ stats.total_areas }}</h3>
-                    <p>登録支店数</p>
-                </div>
-                <div class="stat-card">
-                    <h3>{{ stats.total_accounts }}</h3>
-                    <p>総アカウント数</p>
-                </div>
-                <div class="stat-card">
-                    <h3>{{ stats.hellowork_accounts }}</h3>
-                    <p>ハローワーク対象</p>
-                </div>
-                <div class="stat-card">
-                    <h3>{{ stats.total_companies }}</h3>
-                    <p>企業データ件数</p>
-                </div>
-            </div>
-        </div>
+
         
         <div class="card">
             <h2>📅 データ表示期間設定</h2>
@@ -535,9 +514,6 @@ MAIN_TEMPLATE = '''
                 
                 <button onclick="loadDataWithFilter()" class="btn btn-primary">
                     📊 データを読み込み
-                </button>
-                <button onclick="loadCurrentData()" class="btn btn-info">
-                    🔄 現在の設定で再読み込み
                 </button>
             </div>
             
@@ -620,18 +596,6 @@ MAIN_TEMPLATE = '''
                         {% endfor %}
                     </tbody>
                 </table>
-            </div>
-        </div>
-        
-        <div class="card">
-            <h2>�🛠️ 管理ツール</h2>
-            <div style="display: flex; flex-wrap: wrap; gap: 10px;">
-                <a href="http://localhost:8081" target="_blank" class="btn btn-info">phpMyAdmin</a>
-                <a href="http://localhost:8082" target="_blank" class="btn btn-info">Adminer</a>
-                <a href="/api/areas" target="_blank" class="btn btn-primary">支店API</a>
-                <a href="/api/accounts" target="_blank" class="btn btn-primary">アカウントAPI</a>
-                <a href="/api/mapping" target="_blank" class="btn btn-primary">マッピングAPI</a>
-                <button onclick="exportHierarchicalReport()" class="btn btn-success">📊 階層構造 Excel出力</button>
             </div>
         </div>
     </div>
@@ -766,7 +730,7 @@ MAIN_TEMPLATE = '''
                         // マッピング情報を更新
                         updateMappingSection(data.areas);
                         
-                        alert(`✅ ${data.period_text}のデータを読み込みました（合計: ${data.total_companies.toLocaleString()}件, 新規: ${data.total_new}件, 更新: ${data.total_update}件）`);
+                        //alert(`✅ ${data.period_text}のデータを読み込みました（合計: ${data.total_companies.toLocaleString()}件, 新規: ${data.total_new}件, 更新: ${data.total_update}件）`);
                     } else {
                         alert('❌ データ読み込みエラー: ' + data.message);
                     }
