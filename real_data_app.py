@@ -161,7 +161,7 @@ def get_area_account_summary():
             {
                 'id': row.id,
                 'name': row.department_name,
-                'needs_hellowork': bool(row.needs_hellowork),
+                'needs_hellowork': row.needs_hellowork,
                 'area_count': row.area_count
             } for row in account_summary
         ]
@@ -193,7 +193,7 @@ def get_area_account_mapping():
             'area_name': row.area_name_ja,
             'account_id': row.fm_account_id,
             'account_name': row.department_name,
-            'needs_hellowork': bool(row.needs_hellowork),
+            'needs_hellowork': row.needs_hellowork,
             'is_related': row.is_related
         } for row in mapping
     ]
@@ -779,10 +779,24 @@ MAIN_TEMPLATE = '''
                             const isLast = index === area.accounts.length - 1;
                             const treeChar = isLast ? '└─' : '├─';
                             
-                            // ハローワーク対応状況の表示
-                            const helloworkBadge = account.needs_hellowork 
-                                ? '<span style="background: #4CAF50; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">ハローワーク対応</span>'
-                                : '<span style="background: #FF9800; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">一般アカウント</span>';
+                            // needs_helloworkの値に応じて表示を切り替え
+                            let helloworkBadge;
+                            switch(account.needs_hellowork) {
+                                case 0:
+                                    helloworkBadge = '<span style="background: #DC3545; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">営業なし</span>';
+                                    break;
+                                case 1:
+                                    helloworkBadge = '<span style="background: #00FF00; color: black; padding: 2px 6px; border-radius: 3px; font-size: 11px;">WEBなし</span>';
+                                    break;
+                                case 2:
+                                    helloworkBadge = '<span style="background: #FFC107; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">WEBあり</span>';
+                                    break;
+                                case 3:
+                                    helloworkBadge = '<span style="background: #007BFF; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">両方対応</span>';
+                                    break;
+                                default:
+                                    helloworkBadge = '<span style="background: #6C757D; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">不明</span>';
+                            }
                             
                             accountRow.innerHTML = `
                                 <td style="padding-left: 20px;">${treeChar} ${account.name}</td>
