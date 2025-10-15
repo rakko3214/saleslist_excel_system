@@ -282,9 +282,37 @@ def get_companies_data_by_period(area_id, account_id, date_filter='today', start
             func.date(Company.updated_at).between(filter_start, filter_end)
         ).count()
         
+        # 振り分けなしデータの定義：
+        # 1. そのアカウントに割り当てられたfm_import_result=0データ
+        # 2. 各支店の最初のアカウントの場合は、追加でアカウント未割り当て(0/null)データも含める
+        unassigned_count = db.session.query(Company).filter(
+            Company.fm_area_id == area_id,
+            Company.imported_fm_account_id == account_id,
+            Company.fm_import_result == 0,
+            func.date(Company.created_at).between(filter_start, filter_end)
+        ).count()
+        
+        # 各支店の最初のアカウントにアカウント未割り当てデータを追加
+        # 関西支店(1) → 関西1部(90000007), 沖縄支店(6) → 九州1部(90000005), 中国支店(7) → 関西1部(90000007)
+        first_account_mappings = {
+            1: 90000007,  # 関西支店 → 関西1部
+            6: 90000005,  # 沖縄支店 → 九州1部  
+            7: 90000007   # 中国支店 → 関西1部
+        }
+        
+        if area_id in first_account_mappings and account_id == first_account_mappings[area_id]:
+            unassigned_additional = db.session.query(Company).filter(
+                Company.fm_area_id == area_id,
+                (Company.imported_fm_account_id.is_(None) | (Company.imported_fm_account_id == 0)),
+                Company.fm_import_result == 0,
+                func.date(Company.created_at).between(filter_start, filter_end)
+            ).count()
+            unassigned_count += unassigned_additional
+        
         return {
             'new_count': new_count,
             'update_count': update_count,
+            'unassigned_count': unassigned_count,
             'period': f'{filter_start} 〜 {filter_end}'
         }
         
@@ -295,6 +323,7 @@ def get_companies_data_by_period(area_id, account_id, date_filter='today', start
         return {
             'new_count': random.randint(5, 25),
             'update_count': random.randint(3, 15),
+            'unassigned_count': random.randint(0, 5),
             'period': f'{filter_start} 〜 {filter_end} (フォールバック)'
         }
 
@@ -344,6 +373,7 @@ def generate_hierarchical_excel_data(date_filter='today', start_date=None, end_d
         
         area_total_new = 0
         area_total_update = 0
+        area_total_unassigned = 0
         
         for account_info in area_info['accounts']:
             # アカウントヘッダー行（項目名のみ）
@@ -367,7 +397,8 @@ def generate_hierarchical_excel_data(date_filter='today', start_date=None, end_d
                 
                 new_count = data_result['new_count']
                 update_count = data_result['update_count']
-                total_count = new_count + update_count
+                unassigned_count = data_result['unassigned_count']
+                total_count = new_count + update_count + unassigned_count
                 
                 # 新規データ行（画像フォーマット）
                 hierarchical_data.append({
@@ -387,6 +418,15 @@ def generate_hierarchical_excel_data(date_filter='today', start_date=None, end_d
                     '備考': f'{date_text}の全データ（全体2365件対象分）'
                 })
                 
+                # 振り分けなしデータ行（画像フォーマット）
+                hierarchical_data.append({
+                    'レベル': 3,
+                    '項目名': '│  ├─ 振り分けなし',
+                    '種別': '振り分けなし',
+                    '件数': unassigned_count,
+                    '備考': f'{date_text}の全データ（振り分けなし分）'
+                })
+                
                 # アカウント小計行（画像フォーマット）
                 hierarchical_data.append({
                     'レベル': 3,
@@ -398,6 +438,7 @@ def generate_hierarchical_excel_data(date_filter='today', start_date=None, end_d
                 
                 area_total_new += new_count
                 area_total_update += update_count
+                area_total_unassigned += unassigned_count
                 
             except Exception as e:
                 print(f"データ取得エラー: 支店{area_info['area_id']}, アカウント{account_info['account_id']}: {e}")
@@ -420,6 +461,14 @@ def generate_hierarchical_excel_data(date_filter='today', start_date=None, end_d
                 
                 hierarchical_data.append({
                     'レベル': 3,
+                    '項目名': '│  ├─ 振り分けなし',
+                    '種別': '振り分けなし',
+                    '件数': 0,
+                    '備考': f'{date_text}の全データ（エラー）'
+                })
+                
+                hierarchical_data.append({
+                    'レベル': 3,
                     '項目名': '│  └─ 小計',
                     '種別': '小計',
                     '件数': 0,
@@ -427,7 +476,7 @@ def generate_hierarchical_excel_data(date_filter='today', start_date=None, end_d
                 })
         
         # 支店合計行（画像フォーマット）
-        area_total = area_total_new + area_total_update
+        area_total = area_total_new + area_total_update + area_total_unassigned
         hierarchical_data.append({
             'レベル': 1,
             '項目名': f'└─ {area_info["area_name"]} 合計',
@@ -526,7 +575,7 @@ MAIN_TEMPLATE = '''
                 <strong>件数:</strong> <span id="currentCount">読み込み中...</span>
             </div>
         </div>
-        
+        docker-compose up -d        
         <div class="card">
             <h2>📅 日付指定データ操作</h2>
             <div style="margin-bottom: 20px;">
@@ -722,6 +771,7 @@ MAIN_TEMPLATE = '''
                             合計: <strong>${data.total_companies.toLocaleString()}</strong>件
                             <span style="margin-left: 15px; color: #4CAF50;">新規: ${data.total_new}件</span>
                             <span style="margin-left: 10px; color: #2196F3;">更新: ${data.total_update}件</span>
+                            <span style="margin-left: 10px; color: #FF9800;">振り分けなし: ${data.total_unassigned}件</span>
                         `;
                         
                         // 支店別データテーブルを更新（階層構造）
@@ -766,7 +816,7 @@ MAIN_TEMPLATE = '''
                             <td colspan="4" style="background-color: #e8f4fd; font-weight: bold; padding: 12px;">
                                 📍 ${area.name} (ID: ${area.id})
                                 <span style="float: right;">
-                                    新規: ${area.new_count}件 | 更新: ${area.update_count}件 | 合計: ${area.total_count}件
+                                    新規: ${area.new_count}件 | 更新: ${area.update_count}件 | 振り分けなし: ${area.unassigned_count}件 | 合計: ${area.total_count}件
                                 </span>
                             </td>
                         `;
@@ -804,6 +854,7 @@ MAIN_TEMPLATE = '''
                                 <td>
                                     <div>新規: <strong>${account.new_count}</strong>件</div>
                                     <div>更新: <strong>${account.update_count}</strong>件</div>
+                                    <div>振り分けなし: <strong>${account.unassigned_count}</strong>件</div>
                                 </td>
                                 <td><strong>${account.total_count}</strong>件</td>
                             `;
@@ -966,6 +1017,10 @@ MAIN_TEMPLATE = '''
                                         <div style="font-size: 1.5em; font-weight: bold; color: #856404;">${data.total_update}</div>
                                         <div style="color: #856404;">更新データ</div>
                                     </div>
+                                    <div style="text-align: center; padding: 10px; background-color: #fde2e4; border-radius: 5px;">
+                                        <div style="font-size: 1.5em; font-weight: bold; color: #721c24;">${data.total_unassigned}</div>
+                                        <div style="color: #721c24;">振り分けなし</div>
+                                    </div>
                                     <div style="text-align: center; padding: 10px; background-color: #d1ecf1; border-radius: 5px;">
                                         <div style="font-size: 1.5em; font-weight: bold; color: #0c5460;">${data.total_all}</div>
                                         <div style="color: #0c5460;">合計</div>
@@ -981,7 +1036,7 @@ MAIN_TEMPLATE = '''
                             html += `
                                 <div style="margin-bottom: 15px; border: 1px solid #ddd; border-radius: 5px; overflow: hidden;">
                                     <div style="background-color: #f8f9fa; padding: 10px; font-weight: bold; border-bottom: 1px solid #ddd;">
-                                        ${area.area_name} (新規: ${area.area_new_total}件、更新: ${area.area_update_total}件、合計: ${area.area_total}件)
+                                        ${area.area_name} (新規: ${area.area_new_total}件、更新: ${area.area_update_total}件、振り分けなし: ${area.area_unassigned_total}件、合計: ${area.area_total}件)
                                     </div>
                                     <div style="padding: 10px;">
                                         <table style="width: 100%; border-collapse: collapse;">
@@ -990,6 +1045,7 @@ MAIN_TEMPLATE = '''
                                                     <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">アカウント</th>
                                                     <th style="padding: 8px; border: 1px solid #ddd; text-align: center;">新規</th>
                                                     <th style="padding: 8px; border: 1px solid #ddd; text-align: center;">更新</th>
+                                                    <th style="padding: 8px; border: 1px solid #ddd; text-align: center;">振り分けなし</th>
                                                     <th style="padding: 8px; border: 1px solid #ddd; text-align: center;">合計</th>
                                                 </tr>
                                             </thead>
@@ -1002,6 +1058,7 @@ MAIN_TEMPLATE = '''
                                         <td style="padding: 8px; border: 1px solid #ddd;">${account.account_name}</td>
                                         <td style="padding: 8px; border: 1px solid #ddd; text-align: center; background-color: #d4edda;">${account.new_count}</td>
                                         <td style="padding: 8px; border: 1px solid #ddd; text-align: center; background-color: #fff3cd;">${account.update_count}</td>
+                                        <td style="padding: 8px; border: 1px solid #ddd; text-align: center; background-color: #fde2e4;">${account.unassigned_count}</td>
                                         <td style="padding: 8px; border: 1px solid #ddd; text-align: center; font-weight: bold;">${account.total_count}</td>
                                     </tr>
                                 `;
@@ -1341,11 +1398,13 @@ def get_filtered_data():
         # 全支店の詳細データを構築
         total_new = 0
         total_update = 0
+        total_unassigned = 0
         areas_data = []
         
         for area_info in areas_with_accounts:
             area_new_total = 0
             area_update_total = 0
+            area_unassigned_total = 0
             accounts_detail = []
             
             # 全アカウントでデータを取得（ハローワーク制限なし）
@@ -1359,10 +1418,12 @@ def get_filtered_data():
                     
                     account_new = result['new_count']
                     account_update = result['update_count']
-                    account_total = account_new + account_update
+                    account_unassigned = result['unassigned_count']
+                    account_total = account_new + account_update + account_unassigned
                     
                     area_new_total += account_new
                     area_update_total += account_update
+                    area_unassigned_total += account_unassigned
                     
                     # アカウント詳細情報
                     accounts_detail.append({
@@ -1371,6 +1432,7 @@ def get_filtered_data():
                         'relation_type': "メイン",  # is_related=1のみ取得しているため
                         'new_count': account_new,
                         'update_count': account_update,
+                        'unassigned_count': account_unassigned,
                         'total_count': account_total,
                         'needs_hellowork': account_info['needs_hellowork']
                     })
@@ -1384,6 +1446,7 @@ def get_filtered_data():
                         'relation_type': "メイン",
                         'new_count': 0,
                         'update_count': 0,
+                        'unassigned_count': 0,
                         'total_count': 0,
                         'needs_hellowork': account_info['needs_hellowork']
                     })
@@ -1391,6 +1454,7 @@ def get_filtered_data():
             
             total_new += area_new_total
             total_update += area_update_total
+            total_unassigned += area_unassigned_total
             
             # 支店詳細情報
             areas_data.append({
@@ -1398,7 +1462,8 @@ def get_filtered_data():
                 'name': area_info['area_name'],
                 'new_count': area_new_total,
                 'update_count': area_update_total,
-                'total_count': area_new_total + area_update_total,
+                'unassigned_count': area_unassigned_total,
+                'total_count': area_new_total + area_update_total + area_unassigned_total,
                 'accounts': accounts_detail,
                 'has_hellowork_accounts': area_info['has_hellowork_accounts']
             })
@@ -1410,7 +1475,8 @@ def get_filtered_data():
             'period_text': period_text,
             'total_new': total_new,
             'total_update': total_update,
-            'total_companies': total_new + total_update,
+            'total_unassigned': total_unassigned,
+            'total_companies': total_new + total_update + total_unassigned,
             'areas': areas_data
         }
         
@@ -1444,6 +1510,7 @@ def get_date_range_data():
         period_results = []
         total_new = 0
         total_update = 0
+        total_unassigned = 0
         
         # 支店ごとにグループ化
         areas = {}
@@ -1462,6 +1529,7 @@ def get_date_range_data():
         for area_name, area_data in areas.items():
             area_new_total = 0
             area_update_total = 0
+            area_unassigned_total = 0
             account_details = []
             
             for account in area_data['accounts']:
@@ -1476,24 +1544,29 @@ def get_date_range_data():
                 
                 new_count = data_result['new_count']
                 update_count = data_result['update_count']
+                unassigned_count = data_result['unassigned_count']
                 
                 area_new_total += new_count
                 area_update_total += update_count
+                area_unassigned_total += unassigned_count
                 total_new += new_count
                 total_update += update_count
+                total_unassigned += unassigned_count
                 
                 account_details.append({
                     'account_name': account['account_name'],
                     'new_count': new_count,
                     'update_count': update_count,
-                    'total_count': new_count + update_count
+                    'unassigned_count': unassigned_count,
+                    'total_count': new_count + update_count + unassigned_count
                 })
             
             period_results.append({
                 'area_name': area_name,
                 'area_new_total': area_new_total,
                 'area_update_total': area_update_total,
-                'area_total': area_new_total + area_update_total,
+                'area_unassigned_total': area_unassigned_total,
+                'area_total': area_new_total + area_update_total + area_unassigned_total,
                 'accounts': account_details
             })
         
@@ -1504,7 +1577,8 @@ def get_date_range_data():
             'end_date': end_date_str,
             'total_new': total_new,
             'total_update': total_update,
-            'total_all': total_new + total_update,
+            'total_unassigned': total_unassigned,
+            'total_all': total_new + total_update + total_unassigned,
             'areas': period_results
         })
         
@@ -1595,6 +1669,67 @@ def api_test():
             'status': 'error',
             'message': str(e),
             'database': 'disconnected'
+        }), 500
+
+@app.route('/api/debug-unassigned', methods=['GET'])
+def debug_unassigned():
+    """振り分けなしデータのデバッグ用エンドポイント"""
+    try:
+        # 10月15日のfm_import_result = 0のデータを詳細確認
+        today_unassigned = db.session.query(
+            Company.fm_area_id,
+            Company.imported_fm_account_id,
+            func.count(Company.id).label('count')
+        ).filter(
+            Company.fm_import_result == 0,
+            func.date(Company.created_at) == '2025-10-15'
+        ).group_by(
+            Company.fm_area_id,
+            Company.imported_fm_account_id
+        ).order_by(
+            Company.fm_area_id,
+            Company.imported_fm_account_id
+        ).all()
+        
+        # 各支店の最初のアカウントを確認
+        area_first_accounts = {}
+        area_account_mapping = db.session.query(
+            FmAreaAccount.fm_area_id,
+            FmAreaAccount.fm_account_id,
+            FmAccount.department_name
+        ).join(
+            FmAccount, FmAreaAccount.fm_account_id == FmAccount.id
+        ).filter(
+            FmAreaAccount.is_related == 1
+        ).order_by(
+            FmAreaAccount.fm_area_id,
+            FmAccount.sort_order
+        ).all()
+        
+        for mapping in area_account_mapping:
+            area_id = mapping.fm_area_id
+            if area_id not in area_first_accounts:
+                area_first_accounts[area_id] = {
+                    'account_id': mapping.fm_account_id,
+                    'account_name': mapping.department_name
+                }
+        
+        return jsonify({
+            'status': 'success',
+            'today_unassigned_by_area_account': [
+                {
+                    'fm_area_id': row.fm_area_id,
+                    'imported_fm_account_id': row.imported_fm_account_id,
+                    'count': row.count
+                } for row in today_unassigned
+            ],
+            'area_first_accounts': area_first_accounts
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
         }), 500
 
 if __name__ == '__main__':
