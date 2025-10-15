@@ -283,31 +283,9 @@ def get_companies_data_by_period(area_id, account_id, date_filter='today', start
         ).count()
         
         # 振り分けなしデータの定義：
-        # 1. そのアカウントに割り当てられたfm_import_result=0データ
-        # 2. 各支店の最初のアカウントの場合は、追加でアカウント未割り当て(0/null)データも含める
-        unassigned_count = db.session.query(Company).filter(
-            Company.fm_area_id == area_id,
-            Company.imported_fm_account_id == account_id,
-            Company.fm_import_result == 0,
-            func.date(Company.created_at).between(filter_start, filter_end)
-        ).count()
-        
-        # 各支店の最初のアカウントにアカウント未割り当てデータを追加
-        # 関西支店(1) → 関西1部(90000007), 沖縄支店(6) → 九州1部(90000005), 中国支店(7) → 関西1部(90000007)
-        first_account_mappings = {
-            1: 90000007,  # 関西支店 → 関西1部
-            6: 90000005,  # 沖縄支店 → 九州1部  
-            7: 90000007   # 中国支店 → 関西1部
-        }
-        
-        if area_id in first_account_mappings and account_id == first_account_mappings[area_id]:
-            unassigned_additional = db.session.query(Company).filter(
-                Company.fm_area_id == area_id,
-                (Company.imported_fm_account_id.is_(None) | (Company.imported_fm_account_id == 0)),
-                Company.fm_import_result == 0,
-                func.date(Company.created_at).between(filter_start, filter_end)
-            ).count()
-            unassigned_count += unassigned_additional
+        # 支部レベルでは振り分けなしは表示しない（常に0件）
+        # 支店レベルでのみアカウント未割り当てデータを表示する方針に変更
+        unassigned_count = 0  # 支部レベルでは常に0件
         
         return {
             'new_count': new_count,
@@ -398,7 +376,8 @@ def generate_hierarchical_excel_data(date_filter='today', start_date=None, end_d
                 new_count = data_result['new_count']
                 update_count = data_result['update_count']
                 unassigned_count = data_result['unassigned_count']
-                total_count = new_count + update_count + unassigned_count
+                # 部門レベルは振り分けなしを除外した合計
+                total_count = new_count + update_count
                 
                 # 新規データ行（画像フォーマット）
                 hierarchical_data.append({
@@ -574,8 +553,7 @@ MAIN_TEMPLATE = '''
                 <strong>📈 現在表示中:</strong> <span id="currentPeriod">今日のデータ</span> | 
                 <strong>件数:</strong> <span id="currentCount">読み込み中...</span>
             </div>
-        </div>
-        docker-compose up -d        
+        </div>   
         <div class="card">
             <h2>📅 日付指定データ操作</h2>
             <div style="margin-bottom: 20px;">
@@ -854,9 +832,8 @@ MAIN_TEMPLATE = '''
                                 <td>
                                     <div>新規: <strong>${account.new_count}</strong>件</div>
                                     <div>更新: <strong>${account.update_count}</strong>件</div>
-                                    <div>振り分けなし: <strong>${account.unassigned_count}</strong>件</div>
                                 </td>
-                                <td><strong>${account.total_count}</strong>件</td>
+                                <td><strong>${account.new_count + account.update_count}</strong>件</td>
                             `;
                         });
                         
@@ -869,7 +846,7 @@ MAIN_TEMPLATE = '''
                                     【${area.name} 合計】
                                 </td>
                                 <td style="font-weight: bold; color: #2196F3;">
-                                    <strong>${area.total_count}</strong>件
+                                    <strong>${area.new_count + area.update_count}</strong>件
                                 </td>
                             `;
                         }
@@ -1045,7 +1022,6 @@ MAIN_TEMPLATE = '''
                                                     <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">アカウント</th>
                                                     <th style="padding: 8px; border: 1px solid #ddd; text-align: center;">新規</th>
                                                     <th style="padding: 8px; border: 1px solid #ddd; text-align: center;">更新</th>
-                                                    <th style="padding: 8px; border: 1px solid #ddd; text-align: center;">振り分けなし</th>
                                                     <th style="padding: 8px; border: 1px solid #ddd; text-align: center;">合計</th>
                                                 </tr>
                                             </thead>
@@ -1058,7 +1034,6 @@ MAIN_TEMPLATE = '''
                                         <td style="padding: 8px; border: 1px solid #ddd;">${account.account_name}</td>
                                         <td style="padding: 8px; border: 1px solid #ddd; text-align: center; background-color: #d4edda;">${account.new_count}</td>
                                         <td style="padding: 8px; border: 1px solid #ddd; text-align: center; background-color: #fff3cd;">${account.update_count}</td>
-                                        <td style="padding: 8px; border: 1px solid #ddd; text-align: center; background-color: #fde2e4;">${account.unassigned_count}</td>
                                         <td style="padding: 8px; border: 1px solid #ddd; text-align: center; font-weight: bold;">${account.total_count}</td>
                                     </tr>
                                 `;
@@ -1407,6 +1382,37 @@ def get_filtered_data():
             area_unassigned_total = 0
             accounts_detail = []
             
+            # 支店レベルでの振り分けなしデータを直接取得
+            try:
+                area_unassigned_total = db.session.query(Company).filter(
+                    Company.fm_area_id == area_info['area_id'],
+                    (Company.imported_fm_account_id.is_(None) | (Company.imported_fm_account_id == 0)),
+                    Company.fm_import_result == 0,
+                    func.date(Company.created_at) == datetime.now().date() if date_filter == 'today' else True
+                ).count()
+                
+                # 期間フィルタを適用
+                if date_filter == 'week':
+                    start_date = datetime.now().date() - timedelta(days=7)
+                    area_unassigned_total = db.session.query(Company).filter(
+                        Company.fm_area_id == area_info['area_id'],
+                        (Company.imported_fm_account_id.is_(None) | (Company.imported_fm_account_id == 0)),
+                        Company.fm_import_result == 0,
+                        func.date(Company.created_at).between(start_date, datetime.now().date())
+                    ).count()
+                elif date_filter == 'month':
+                    start_date = datetime.now().date() - timedelta(days=30)
+                    area_unassigned_total = db.session.query(Company).filter(
+                        Company.fm_area_id == area_info['area_id'],
+                        (Company.imported_fm_account_id.is_(None) | (Company.imported_fm_account_id == 0)),
+                        Company.fm_import_result == 0,
+                        func.date(Company.created_at).between(start_date, datetime.now().date())
+                    ).count()
+                
+            except Exception as e:
+                print(f"支店レベル振り分けなしデータ取得エラー: 支店{area_info['area_id']}: {e}")
+                area_unassigned_total = 0
+            
             # 全アカウントでデータを取得（ハローワーク制限なし）
             for account_info in area_info['accounts']:
                 try:
@@ -1418,12 +1424,12 @@ def get_filtered_data():
                     
                     account_new = result['new_count']
                     account_update = result['update_count']
-                    account_unassigned = result['unassigned_count']
-                    account_total = account_new + account_update + account_unassigned
+                    account_unassigned = result['unassigned_count']  # 常に0になる
+                    account_total = account_new + account_update  # 振り分けなしを含めない
                     
                     area_new_total += account_new
                     area_update_total += account_update
-                    area_unassigned_total += account_unassigned
+                    # area_unassigned_totalは支店レベルで直接取得するため、ここでは加算しない
                     
                     # アカウント詳細情報
                     accounts_detail.append({
@@ -1433,7 +1439,7 @@ def get_filtered_data():
                         'new_count': account_new,
                         'update_count': account_update,
                         'unassigned_count': account_unassigned,
-                        'total_count': account_total,
+                        'total_count': account_total,  # 新規+更新のみ
                         'needs_hellowork': account_info['needs_hellowork']
                     })
                     
@@ -1463,7 +1469,7 @@ def get_filtered_data():
                 'new_count': area_new_total,
                 'update_count': area_update_total,
                 'unassigned_count': area_unassigned_total,
-                'total_count': area_new_total + area_update_total + area_unassigned_total,
+                'total_count': area_new_total + area_update_total + area_unassigned_total,  # 振り分けなしを含める
                 'accounts': accounts_detail,
                 'has_hellowork_accounts': area_info['has_hellowork_accounts']
             })
@@ -1532,6 +1538,18 @@ def get_date_range_data():
             area_unassigned_total = 0
             account_details = []
             
+            # 支店レベルでの振り分けなしデータを直接取得
+            try:
+                area_unassigned_total = db.session.query(Company).filter(
+                    Company.fm_area_id == area_data["area_id"],
+                    (Company.imported_fm_account_id.is_(None) | (Company.imported_fm_account_id == 0)),
+                    Company.fm_import_result == 0,
+                    func.date(Company.created_at).between(start_date, end_date)
+                ).count()
+            except Exception as e:
+                print(f"支店レベル振り分けなしデータ取得エラー（日付範囲）: 支店{area_data['area_id']}: {e}")
+                area_unassigned_total = 0
+            
             for account in area_data['accounts']:
                 # 実際のデータベースから件数を取得
                 data_result = get_companies_data_by_period(
@@ -1544,29 +1562,31 @@ def get_date_range_data():
                 
                 new_count = data_result['new_count']
                 update_count = data_result['update_count']
-                unassigned_count = data_result['unassigned_count']
+                unassigned_count = data_result['unassigned_count']  # 常に0
                 
                 area_new_total += new_count
                 area_update_total += update_count
-                area_unassigned_total += unassigned_count
+                # area_unassigned_totalは支店レベルで直接取得するため、ここでは加算しない
                 total_new += new_count
                 total_update += update_count
-                total_unassigned += unassigned_count
                 
                 account_details.append({
                     'account_name': account['account_name'],
                     'new_count': new_count,
                     'update_count': update_count,
-                    'unassigned_count': unassigned_count,
-                    'total_count': new_count + update_count + unassigned_count
+                    'unassigned_count': unassigned_count,  # 常に0
+                    'total_count': new_count + update_count  # 振り分けなしを含めない
                 })
+            
+            # 支店レベルの振り分けなしを全体の合計に追加
+            total_unassigned += area_unassigned_total
             
             period_results.append({
                 'area_name': area_name,
                 'area_new_total': area_new_total,
                 'area_update_total': area_update_total,
                 'area_unassigned_total': area_unassigned_total,
-                'area_total': area_new_total + area_update_total + area_unassigned_total,
+                'area_total': area_new_total + area_update_total + area_unassigned_total,  # 振り分けなしを含める
                 'accounts': account_details
             })
         
