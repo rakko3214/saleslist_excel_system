@@ -239,7 +239,7 @@ def get_all_areas_with_accounts():
     return areas_with_accounts
 
 def get_companies_data_by_period(area_id, account_id, date_filter='today', start_date=None, end_date=None):
-    """期間指定で企業データを取得（支店・アカウント別）"""
+    """期間指定で企業データを取得（支店・アカウント別）- 軽量化対応"""
     from datetime import datetime, timedelta
     
     # 期間の計算
@@ -264,28 +264,28 @@ def get_companies_data_by_period(area_id, account_id, date_filter='today', start
         filter_start = today
         filter_end = today
     
-    # クエリ実行（支店・アカウントフィルタあり）
+    # 軽量化: 個別クエリではなく一度にまとめて取得
     try:
-        # 新規データの定義：fm_import_result = 2 で指定期間に作成されたデータ
-        new_count = db.session.query(Company).filter(
+        # 基本フィルタ
+        base_query = db.session.query(Company).filter(
             Company.fm_area_id == area_id,
-            Company.imported_fm_account_id == account_id,
+            Company.imported_fm_account_id == account_id
+        )
+        
+        # 新規データ（fm_import_result = 2）
+        new_count = base_query.filter(
             Company.fm_import_result == 2,
             func.date(Company.created_at).between(filter_start, filter_end)
         ).count()
         
-        # 更新データの定義：fm_import_result = 1 で指定期間に更新されたデータ
-        update_count = db.session.query(Company).filter(
-            Company.fm_area_id == area_id,
-            Company.imported_fm_account_id == account_id,
+        # 更新データ（fm_import_result = 1）
+        update_count = base_query.filter(
             Company.fm_import_result == 1,
             func.date(Company.updated_at).between(filter_start, filter_end)
         ).count()
         
-        # 振り分けなしデータの定義：
-        # 支部レベルでは振り分けなしは表示しない（常に0件）
-        # 支店レベルでのみアカウント未割り当てデータを表示する方針に変更
-        unassigned_count = 0  # 支部レベルでは常に0件
+        # 軽量化: 支部レベルでは振り分けなしは常に0（計算省略）
+        unassigned_count = 0
         
         return {
             'new_count': new_count,
@@ -295,14 +295,13 @@ def get_companies_data_by_period(area_id, account_id, date_filter='today', start
         }
         
     except Exception as e:
-        print(f"データ取得エラー: {e}")
-        # エラー時はrandomデータを返す（フォールバック）
-        import random
+        print(f"データ取得エラー（軽量化）: {e}")
+        # エラー時は空データを返す（フォールバック処理を軽量化）
         return {
-            'new_count': random.randint(5, 25),
-            'update_count': random.randint(3, 15),
-            'unassigned_count': random.randint(0, 5),
-            'period': f'{filter_start} 〜 {filter_end} (フォールバック)'
+            'new_count': 0,
+            'update_count': 0,
+            'unassigned_count': 0,
+            'period': f'{filter_start} 〜 {filter_end} (エラー)'
         }
 
 def generate_hierarchical_excel_data(date_filter='today', start_date=None, end_date=None):
@@ -600,29 +599,34 @@ MAIN_TEMPLATE = '''
             </div>
         </div>
         
-        <div class="card", id="dateFilter" style="padding: 8px; margin-right: 15px; border: 1px solid #ddd; border-radius: 4px;">
-            <h2>🏢 支店別データ</h2>
-            <div class="table-container">
-                <table id="areaTable">
-                    <thead>
-                        <tr>
-                            <th>支店ID</th>
-                            <th>支店名</th>
-                            <th>企業データ件数</th>
-                            <th>状況</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for area in areas %}
-                        <tr>
-                            <td>{{ area.id }}</td>
-                            <td><strong>{{ area.name }}</strong></td>
-                            <td>{{ area.company_count }}件</td>
-                            <td><span class="status-success">✅ 稼働中</span></td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+        <div class="card">
+            <h2 style="cursor: pointer; user-select: none;" onclick="toggleAccordion('branchDataSection')">
+                🏢 支店別データ 
+                <span id="branchToggleIcon" style="float: right; font-size: 1.2em;">▼</span>
+            </h2>
+            <div id="branchDataSection" style="display: none; margin-top: 15px;">
+                <div class="table-container">
+                    <table id="areaTable">
+                        <thead>
+                            <tr>
+                                <th>支店ID</th>
+                                <th>支店名</th>
+                                <th>企業データ件数</th>
+                                <th>状況</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for area in areas %}
+                            <tr>
+                                <td>{{ area.id }}</td>
+                                <td><strong>{{ area.name }}</strong></td>
+                                <td>{{ area.company_count }}件</td>
+                                <td><span class="status-success">✅ 稼働中</span></td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
@@ -708,15 +712,18 @@ MAIN_TEMPLATE = '''
             }
         }
         
-        // 期間選択の表示制御
-        document.getElementById('dateFilter').addEventListener('change', function() {
-            const customRange = document.getElementById('customDateRange');
-            if (this.value === 'custom') {
-                customRange.style.display = 'block';
-            } else {
-                customRange.style.display = 'none';
-            }
-        });
+        // 期間選択の表示制御（要素存在チェック付き）
+        const dateFilterElement = document.getElementById('dateFilter');
+        if (dateFilterElement) {
+            dateFilterElement.addEventListener('change', function() {
+                const customRange = document.getElementById('customDateRange');
+                if (customRange && this.value === 'custom') {
+                    customRange.style.display = 'block';
+                } else if (customRange) {
+                    customRange.style.display = 'none';
+                }
+            });
+        }
 
         // 期間フィルタ機能
         async function loadDataWithFilter() {
@@ -746,8 +753,8 @@ MAIN_TEMPLATE = '''
                         // 統計情報を更新
                         currentPeriod.textContent = data.period + 'のデータ';
                         currentCount.innerHTML = `
-                            合計: <strong>${data.total_companies.toLocaleString()}</strong>件
-                            <span style="margin-left: 15px; color: #4CAF50;">新規: ${data.total_new}件</span>
+                            合計: ${data.total_companies.toLocaleString()}件
+                            <span style="margin-left: 15px; color: #4CAF50; font-weight: bold;">新規: ${data.total_new}件</span>
                             <span style="margin-left: 10px; color: #2196F3;">更新: ${data.total_update}件</span>
                             <span style="margin-left: 10px; color: #FF9800;">振り分けなし: ${data.total_unassigned}件</span>
                         `;
@@ -830,10 +837,10 @@ MAIN_TEMPLATE = '''
                                 <td style="padding-left: 20px;">${treeChar} ${account.name}</td>
                                 <td>${helloworkBadge}</td>
                                 <td>
-                                    <div>新規: <strong>${account.new_count}</strong>件</div>
-                                    <div>更新: <strong>${account.update_count}</strong>件</div>
+                                    <div>新規: <strong style="font-weight: bold;">${account.new_count}</strong>件</div>
+                                    <div>更新: ${account.update_count}件</div>
                                 </td>
-                                <td><strong>${account.new_count + account.update_count}</strong>件</td>
+                                <td>${account.new_count + account.update_count}件</td>
                             `;
                         });
                         
@@ -846,7 +853,7 @@ MAIN_TEMPLATE = '''
                                     【${area.name} 合計】
                                 </td>
                                 <td style="font-weight: bold; color: #2196F3;">
-                                    <strong>${area.new_count + area.update_count}</strong>件
+                                    ${area.new_count + area.update_count}件
                                 </td>
                             `;
                         }
@@ -913,14 +920,18 @@ MAIN_TEMPLATE = '''
             }
         }
         
-        // ページ読み込み時に今日のデータを自動読み込み
+        // ページ読み込み時の処理（軽量化）
         document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(loadDataWithFilter, 1000); // 1秒後に自動読み込み
+            // 自動読み込みを3秒後に遅延（ページ表示を高速化）
+            setTimeout(loadDataWithFilter, 3000);
             
             // 今日の日付を初期設定
             const today = new Date().toISOString().split('T')[0];
-            document.getElementById('startDate').value = today;
-            document.getElementById('endDate').value = today;
+            const startDateElement = document.getElementById('startDate');
+            const endDateElement = document.getElementById('endDate');
+            
+            if (startDateElement) startDateElement.value = today;
+            if (endDateElement) endDateElement.value = today;
         });
 
         // 日付範囲設定関数
@@ -988,18 +999,18 @@ MAIN_TEMPLATE = '''
                                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-top: 10px;">
                                     <div style="text-align: center; padding: 10px; background-color: #d4edda; border-radius: 5px;">
                                         <div style="font-size: 1.5em; font-weight: bold; color: #155724;">${data.total_new}</div>
-                                        <div style="color: #155724;">新規データ</div>
+                                        <div style="color: #155724; font-weight: bold;">新規データ</div>
                                     </div>
-                                    <div style="text-align: center; padding: 10px; background-color: #fff3cd; border-radius: 5px;">
-                                        <div style="font-size: 1.5em; font-weight: bold; color: #856404;">${data.total_update}</div>
+                                    <div style="text-align: center; padding: 10px; background-color: #f8f9fa; border-radius: 5px;">
+                                        <div style="font-size: 1.5em; color: #856404;">${data.total_update}</div>
                                         <div style="color: #856404;">更新データ</div>
                                     </div>
                                     <div style="text-align: center; padding: 10px; background-color: #fde2e4; border-radius: 5px;">
-                                        <div style="font-size: 1.5em; font-weight: bold; color: #721c24;">${data.total_unassigned}</div>
+                                        <div style="font-size: 1.5em; color: #721c24;">${data.total_unassigned}</div>
                                         <div style="color: #721c24;">振り分けなし</div>
                                     </div>
                                     <div style="text-align: center; padding: 10px; background-color: #d1ecf1; border-radius: 5px;">
-                                        <div style="font-size: 1.5em; font-weight: bold; color: #0c5460;">${data.total_all}</div>
+                                        <div style="font-size: 1.5em; color: #0c5460;">${data.total_all}</div>
                                         <div style="color: #0c5460;">合計</div>
                                     </div>
                                 </div>
@@ -1032,9 +1043,9 @@ MAIN_TEMPLATE = '''
                                 html += `
                                     <tr>
                                         <td style="padding: 8px; border: 1px solid #ddd;">${account.account_name}</td>
-                                        <td style="padding: 8px; border: 1px solid #ddd; text-align: center; background-color: #d4edda;">${account.new_count}</td>
-                                        <td style="padding: 8px; border: 1px solid #ddd; text-align: center; background-color: #fff3cd;">${account.update_count}</td>
-                                        <td style="padding: 8px; border: 1px solid #ddd; text-align: center; font-weight: bold;">${account.total_count}</td>
+                                        <td style="padding: 8px; border: 1px solid #ddd; text-align: center; background-color: #d4edda;"><strong>${account.new_count}</strong></td>
+                                        <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">${account.update_count}</td>
+                                        <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">${account.total_count}</td>
                                     </tr>
                                 `;
                             });
@@ -1103,6 +1114,20 @@ MAIN_TEMPLATE = '''
                 }
             } catch (error) {
                 alert('❌ Excel出力でエラーが発生しました: ' + error.message);
+            }
+        }
+
+        // アコーディオン機能
+        function toggleAccordion(sectionId) {
+            const section = document.getElementById(sectionId);
+            const icon = document.getElementById('branchToggleIcon');
+            
+            if (section.style.display === 'none') {
+                section.style.display = 'block';
+                icon.textContent = '▲';
+            } else {
+                section.style.display = 'none';
+                icon.textContent = '▼';
             }
         }
 
@@ -1337,7 +1362,7 @@ def export_mapping():
 
 @app.route('/api/filtered-data', methods=['POST'])
 def get_filtered_data():
-    """期間フィルタを適用したデータ取得API（実際のDB構造に基づく階層表示）"""
+    """期間フィルタを適用したデータ取得API（軽量化対応）"""
     try:
         data = request.get_json() or {}
         date_filter = data.get('date_filter', 'today')
@@ -1370,13 +1395,16 @@ def get_filtered_data():
         else:
             period_text = "今日"
         
-        # 全支店の詳細データを構築
+        # 軽量化: 支店の詳細データを構築（最初の5支店のみ）
         total_new = 0
         total_update = 0
         total_unassigned = 0
         areas_data = []
         
-        for area_info in areas_with_accounts:
+        # 軽量化: 処理する支店数を制限（最初の5支店のみ処理）
+        limited_areas = areas_with_accounts[:5] if len(areas_with_accounts) > 5 else areas_with_accounts
+        
+        for area_info in limited_areas:
             area_new_total = 0
             area_update_total = 0
             area_unassigned_total = 0
@@ -1413,8 +1441,8 @@ def get_filtered_data():
                 print(f"支店レベル振り分けなしデータ取得エラー: 支店{area_info['area_id']}: {e}")
                 area_unassigned_total = 0
             
-            # 全アカウントでデータを取得（ハローワーク制限なし）
-            for account_info in area_info['accounts']:
+            # 軽量化: アカウント処理（最初の3アカウントのみ）
+            for account_info in area_info['accounts'][:3]:
                 try:
                     result = get_companies_data_by_period(
                         area_info['area_id'],
@@ -1474,7 +1502,7 @@ def get_filtered_data():
                 'has_hellowork_accounts': area_info['has_hellowork_accounts']
             })
         
-        # レスポンスデータを構築
+        # レスポンスデータを構築（軽量化情報付き）
         response_data = {
             'status': 'success',
             'period': period_text,
@@ -1483,7 +1511,8 @@ def get_filtered_data():
             'total_update': total_update,
             'total_unassigned': total_unassigned,
             'total_companies': total_new + total_update + total_unassigned,
-            'areas': areas_data
+            'areas': areas_data,
+            'performance_note': f'軽量化モード: 最初の{len(limited_areas)}支店、各3アカウントまで表示'
         }
         
         return jsonify(response_data)
